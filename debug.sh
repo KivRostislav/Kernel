@@ -1,0 +1,1 @@
+qemu-system-x86_64 -bios /usr/share/ovmf/OVMF.fd -drive format=raw,file=./build/kernel_image.iso
