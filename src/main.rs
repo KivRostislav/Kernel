@@ -13,32 +13,42 @@ extern crate uefi;
 mod tests;
 mod memory;
 
+use alloc::boxed::Box;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::any::Any;
 use core::convert::TryInto;
 use core::mem::size_of;
-use core::ptr::{addr_of, addr_of_mut};
+use core::ptr::{addr_of, addr_of_mut, NonNull};
 use core::slice;
-use acpi::{AcpiHandler, PhysicalMapping};
+use acpi::{AcpiHandler, AcpiTables, PhysicalMapping};
+use aml::{AmlContext, AmlHandle, AmlName, DebugVerbosity, Handler};
 use log::info;
 use uefi::prelude::*;
 use uefi::proto::console::gop::FrameBuffer;
 use uefi::table::boot::{AllocateType, MemoryType};
-use uefi::Identify;
-use crate::include::memory::{PhysicalMemoryManager, BLOCK_SIZE, MemoryRegion, State, VirtualMemoryManager, GLOBAL_PHYSICAL_MEMORY_MANAGER, GLOBAL_VIRTUAL_MEMORY_MANAGER};
+use uefi::{guid, Identify};
+use uefi::proto::device_path::media::PartitionSignature::Guid;
+use crate::include::memory::{PhysicalMemoryManager, BLOCK_SIZE, MemoryRegion, State, VirtualMemoryManager, GLOBAL_PHYSICAL_MEMORY_MANAGER, GLOBAL_VIRTUAL_MEMORY_MANAGER, Allocate, Map, PhysicalAddress, VirtualAddress, Unmap};
 
 #[derive(Clone, Copy)]
 pub struct ACPI { }
 
 impl AcpiHandler for ACPI {
     unsafe fn map_physical_region<T>(&self, physical_address: usize, size: usize) -> PhysicalMapping<Self, T> {
-        let allocator = unsafe { addr_of!(GLOBAL_PHYSICAL_MEMORY_MANAGER) };
-        todo!()
+        let virtual_memory_manager = unsafe { GLOBAL_VIRTUAL_MEMORY_MANAGER.as_ref().unwrap() };
+        for x in 0..size.div_ceil(BLOCK_SIZE) {
+            virtual_memory_manager.map(physical_address + (BLOCK_SIZE * x) as VirtualAddress, physical_address + (BLOCK_SIZE * x) as PhysicalAddress).unwrap();
+        }
+
+        PhysicalMapping::new(physical_address, NonNull::new(physical_address as *mut T).unwrap(), size, size.div_ceil(BLOCK_SIZE), *self)
     }
 
     fn unmap_physical_region<T>(region: &PhysicalMapping<Self, T>) {
-        todo!()
+        let virtual_memory_manager = unsafe { GLOBAL_VIRTUAL_MEMORY_MANAGER.as_ref().unwrap() };
+        for x in 0..region.mapped_length().div_ceil(BLOCK_SIZE) {
+            virtual_memory_manager.unmap(region.physical_start() + (BLOCK_SIZE * x) as VirtualAddress);
+        }
     }
 }
 
@@ -80,6 +90,22 @@ fn main(image_handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
 
     let virtual_memory_manager = VirtualMemoryManager::init().unwrap();
     unsafe { GLOBAL_VIRTUAL_MEMORY_MANAGER = &virtual_memory_manager; }
+    let acpi_guid = guid!("8868e871-e4f1-11d3-bc22-0080c73c8881");
+    let mut rsdp_address = 0x00;
+    for x in system_table.config_table() {
+        if x.guid == acpi_guid { rsdp_address = x.address as usize; }
+    }
+
+    info!("{:X}", rsdp_address);
+    let handler = ACPI { };
+    let result = unsafe { AcpiTables::from_rsdp(handler, rsdp_address) }.unwrap();
+    let mut handlerx = HandlerX { };
+
+    let mut context = AmlContext::new(unsafe { Box::from_raw(addr_of_mut!(handlerx)) }, DebugVerbosity::Scopes);
+    context.parse_table(unsafe { slice::from_raw_parts(result.dsdt().unwrap().address as *const u8, result.dsdt().unwrap().length as usize) }).unwrap();
+    info!("----------------------------------------------------------------");
+    info!("{:?}", context.namespace);
+    info!("{:?}", context.namespace.get_by_path(&AmlName::from_str("\\_SB_.PCI0").unwrap()).unwrap());
 
     loop {}
     Status::SUCCESS
@@ -88,6 +114,91 @@ fn main(image_handle: Handle, mut system_table: SystemTable<Boot>) -> Status {
 pub fn print(buffer: &FrameBuffer, string: String) {
 
 }
+
+struct HandlerX { }
+impl Handler for HandlerX {
+    fn read_u8(&self, address: usize) -> u8 {
+        unsafe { (address as *const u8).read() }
+    }
+
+    fn read_u16(&self, address: usize) -> u16 {
+        unsafe { (address as *const u16).read() }
+    }
+
+    fn read_u32(&self, address: usize) -> u32 {
+        unsafe { (address as *const u32).read() }
+    }
+
+    fn read_u64(&self, address: usize) -> u64 {
+        unsafe { (address as *const u64).read() }
+    }
+
+    fn write_u8(&mut self, address: usize, value: u8) {
+        todo!()
+    }
+
+    fn write_u16(&mut self, address: usize, value: u16) {
+        todo!()
+    }
+
+    fn write_u32(&mut self, address: usize, value: u32) {
+        todo!()
+    }
+
+    fn write_u64(&mut self, address: usize, value: u64) {
+        todo!()
+    }
+
+    fn read_io_u8(&self, port: u16) -> u8 {
+        todo!()
+    }
+
+    fn read_io_u16(&self, port: u16) -> u16 {
+        todo!()
+    }
+
+    fn read_io_u32(&self, port: u16) -> u32 {
+        todo!()
+    }
+
+    fn write_io_u8(&self, port: u16, value: u8) {
+        todo!()
+    }
+
+    fn write_io_u16(&self, port: u16, value: u16) {
+        todo!()
+    }
+
+    fn write_io_u32(&self, port: u16, value: u32) {
+        todo!()
+    }
+
+    fn read_pci_u8(&self, segment: u16, bus: u8, device: u8, function: u8, offset: u16) -> u8 {
+        todo!()
+    }
+
+    fn read_pci_u16(&self, segment: u16, bus: u8, device: u8, function: u8, offset: u16) -> u16 {
+        todo!()
+    }
+
+    fn read_pci_u32(&self, segment: u16, bus: u8, device: u8, function: u8, offset: u16) -> u32 {
+        todo!()
+    }
+
+    fn write_pci_u8(&self, segment: u16, bus: u8, device: u8, function: u8, offset: u16, value: u8) {
+        todo!()
+    }
+
+    fn write_pci_u16(&self, segment: u16, bus: u8, device: u8, function: u8, offset: u16, value: u16) {
+        todo!()
+    }
+
+    fn write_pci_u32(&self, segment: u16, bus: u8, device: u8, function: u8, offset: u16, value: u32) {
+        todo!()
+    }
+}
+
+
 /***
 let boot_services = system_table.boot_services();
         let graphics_handle = boot_services.get_handle_for_protocol::<GraphicsOutput>();
